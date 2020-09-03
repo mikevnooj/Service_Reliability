@@ -1,0 +1,48 @@
+---
+title: "Daily Service Reliability Report"
+author: "Mike Nugent, Jr."
+date: '`r gsub(" 0"," ", format(Sys.Date(), "%B %d, %Y"))`'
+knit: (function(inputFile, encoding){rmarkdown::render(inputFile,encoding = encoding,output_file = paste0(format(Sys.Date(), "%Y%m%d"), " Service Reliability Report", '.html'))})
+
+#paste this back in later
+#"//iptc-prtsvr1/shared/Transportation Management/Service Reliability Reports")})
+
+  
+output: 
+  html_document:
+    df_print: paged
+    fig_cap: true
+    code_folding: hide
+    toc: true
+    toc_depth: 2
+---
+````{r}
+getwd()
+
+````
+
+
+```{r set libraries and options, include=F}
+
+library(data.table)
+library(kableExtra)
+library(scales)
+library(lubridate)
+message("test")
+
+knitr::opts_chunk$set(echo = TRUE,message = F)
+
+```
+
+```{r define date variables, include = FALSE}
+
+#dynamic date vars
+yesterday_Avail <- lubridate::floor_date(Sys.Date() -1,unit = "day")
+
+
+current_month_Avail <- floor_date(Sys.Date() -1,unit= "month")
+
+since_september_Avail <- ""
+
+
+```
