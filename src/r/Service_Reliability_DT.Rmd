@@ -16,11 +16,6 @@ output:
     toc: true
     toc_depth: 2
 ---
-````{r}
-getwd()
-
-````
-
 
 ```{r set libraries and options, include=F}
 
@@ -28,7 +23,7 @@ library(data.table)
 library(kableExtra)
 library(scales)
 library(lubridate)
-message("test")
+
 
 knitr::opts_chunk$set(echo = TRUE,message = F)
 
@@ -37,12 +32,11 @@ knitr::opts_chunk$set(echo = TRUE,message = F)
 ```{r define date variables, include = FALSE}
 
 #dynamic date vars
-yesterday_Avail <- lubridate::floor_date(Sys.Date() -1,unit = "day")
+yesterday_avail <- lubridate::floor_date(Sys.Date() - 1,unit = "day")
 
+#current_month_avail <- floor_date(Sys.Date() - 1,unit= "month")
 
-current_month_Avail <- floor_date(Sys.Date() -1,unit= "month")
-
-since_september_Avail <- ""
+since_september_avail <- "2019-09-01"
 
 
 ```
