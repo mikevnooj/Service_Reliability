@@ -1,0 +1,2569 @@
+---
+title: "Daily Service Reliability Report"
+author: "Samuel B. Carter"
+date: '`r gsub(" 0", " ", format(as.Date("2020-08-21"), "%B %d, %Y"))`' # crtl+f and change all dates for past reports. Be sure to change second yesterday_Avail variable.
+knit: (function(inputFile, encoding) { rmarkdown::render(inputFile, encoding = encoding, output_file = paste0(format(as.Date("2020-08-21"), "%Y%m%d"), " Service Reliability Testing",'.html'));rmarkdown::render(inputFile, encoding = encoding, output_file = paste0(format(as.Date("2020-08-21"), "%Y%m%d"), " Service Reliability Testing",'.html'),output_dir = "//iptc-prtsvr1/shared/Transportation Management/Service Reliability Reports")})
+output:
+  html_document:
+    df_print: paged
+    fig_cap: true
+    code_folding: hide
+    toc: true
+    toc_depth: 2
+    
+---
+
+```{r set libraries, include=FALSE, results='hide'}
+
+library(tidyverse)
+library(kableExtra)
+library(scales)
+library(lubridate)
+
+```
+
+```{r define date variables, include = FALSE}
+
+# set dynamic date variables 
+
+yesterday_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "day") # this is overwritten for past dates, if switched on.
+
+# current_month_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "month")
+since_september_Avail <- "2019-09-01"
+
+last_month_end_Avail <- lubridate::floor_date(Sys.Date(), unit = "month") - 1
+
+last_month_start_Avail <- lubridate::rollback(last_month_end_Avail, roll_to_first = TRUE, preserve_hms = FALSE)
+
+report_start_time <- Sys.time()
+
+yesterday_full_date <- gsub(" 0", " ", format(yesterday_Avail, "%B %d, %Y" ))
+
+last_month_name <- format(last_month_start_Avail, "%B" )
+
+last_week_start_Avail <- lubridate::floor_date(Sys.Date() -7, unit = "week")
+
+last_week_end_Avail <- lubridate::ceiling_date(Sys.Date() - 7, unit = "week") - 1
+
+# # date switches -- turn this on to search for past date
+# 
+yesterday_Avail <- as.Date("2020-08-15") - 1 # switch this for past date.
+
+last_month_end_Avail <- lubridate::floor_date(yesterday_Avail, unit = "month") - 1
+
+last_month_start_Avail <- lubridate::rollback(last_month_end_Avail, roll_to_first = TRUE, preserve_hms = FALSE)
+
+yesterday_full_date <- gsub(" 0", " ", format(yesterday_Avail, "%B %d, %Y" ))
+
+last_month_name <- format(last_month_start_Avail, "%B" )
+
+last_week_start_Avail <- lubridate::floor_date(yesterday_Avail  -7, unit = "week")
+
+last_week_end_Avail <- lubridate::ceiling_date(yesterday_Avail  - 7, unit = "week") - 1
+
+```
+This report presents key service reliability metrics: on-time performance (OTP) and headway adherence. Unless otherwise noted, **this report concerns service provided on `r yesterday_full_date`**.
+
+## OTP
+
+Operators are considered "on-time" if while in revenue service they depart a timepoint within one minute early or five minutes late from the scheduled time of departure.
+
+On-time performance is calculated as the number of on-time depatures divided by the total number of departures for each category (mode, operator, month, etc).
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+```{r revision history}
+
+# 2/27/20 - Added revision history. Added future improvement list.
+#           Added best performing operator/block OTP.
+
+# 3/20/20 - Improved BRT OTP calculation for historical data.
+#           Added number of minutes early for earliest operators (at some time in the past)
+
+# 4/10/20 - Added scheduled/actual departure times for earliest departures. Simplified earliest departure function. 
+
+# 4/15/20 - Added MTD by mode function
+
+# 4/17/20 - Added YTD by mode function
+
+# 5/4/20  - Added index, reduced field call to streamline joins, reduce memory consumption.
+
+# 5/10/20 - Added "yesterday" limit to DimDate since September (to enable better historical reporting)
+
+# 5/13/20 - Added !is.na(DepartTimeVarianceSecs) to collect statement
+
+# 6/9/20 - Fixed issue whereby CalendarDate search was getting days after, but not including,
+#          Jan 1, 2020.
+
+# 6/15/20 - Began testing implemnetation of headway adherence reporting.
+
+# 6/16/20 - Finished import, went through QA/QC, changed object names.
+#         - Added time of completion thingy.
+
+# 6/17-6/18 - Continued working on this.
+
+# 7/15/20 - Added all early timepoints to a datatable.
+
+# 7/31/20 - Changed 90 percent club threshold back to 675.
+#         - Added on-time departures, so that OTP can always be calculated.
+
+# 8/3/20 - Added date-switch option, to recover past reports. Still need to fix YAML.
+
+# 8/14/20 - Added last-week date variables. Added weekly team OTP. Changed MTD to just "Monthly"
+
+# 8/21/20 - Changed YAML to also generate report in shared Transportation Management folder, for supervisors.
+```
+
+```{r future improvements}
+
+# 2/27/20 - Add hour of day OTP. (DONE)
+#           Consider adding toggle buttons. Consider adding links.(DONE)
+#         - Add station OTP  (DONE)
+
+# 6/19/20 - Need to add number of headways, (DONE)
+#         - MTD and YTD for HA still wrong. Need to fix.(DONE)
+#         - Still need to fix size of last graph. Also consider n chart for hour of day...
+
+
+# 7/30/20 - Should add number of on-time departures so that anyone can calculate OTP. (DONE)
+
+# 8/3/20 - Should add possibility of older-date search to recover lost/missing reports.
+#        - Fix YAML for past reports (so that date is not manually entered when recovering past/weekend reports) (https://stackoverflow.com/questions/31861569/setting-document-title-in-rmarkdown-from-parameters)
+#        - Change file-name of downloadable data tables. Here is example: https://stackoverflow.com/questions/56275928/change-filename-when-downloading-data-from-datatable-r
+
+```
+
+```{r get and clean data, results='asis'}
+# gather, clean, transform data
+
+# get Avail adherence
+
+con2 <- DBI::dbConnect(odbc::odbc(), Driver = "SQL Server", Server = "AVAILDWHP01VW",
+                         Database = "DW_IndyGo",
+                         Port = 1433)
+  
+# get calendar key
+
+DimDate_yesterday <- tbl(con2, "DimDate") %>%
+  filter(CalendarDate == yesterday_Avail) %>%
+  collect()
+
+# get month to date calendar key
+
+DimDate_last_month <- tbl(con2, "DimDate") %>%
+  filter(CalendarDate >= last_month_start_Avail, 
+         CalendarDate <= last_month_end_Avail) %>%
+  collect()
+
+DimDate_last_month_last_day <- max(DimDate_last_month$DateKey)
+DimDate_last_month_first_day <- min(DimDate_last_month$DateKey)
+
+# get dates since september
+
+DimDate_since_september <- tbl(con2, "DimDate") %>%
+  filter(CalendarDate >= since_september_Avail, CalendarDate <= yesterday_Avail) %>%
+  collect()
+
+# get last week calendar key
+
+DimDate_last_week <- tbl(con2, "DimDate") %>%
+  filter(between(CalendarDate, last_week_start_Avail, last_week_end_Avail)) %>%
+  collect()
+
+# get DimPattern
+
+DimPattern <- tbl(con2, "DimPattern") %>% collect()
+
+# get routes
+
+DimRoute <- tbl(con2, "DimRoute") %>% collect()
+
+# get vehicles
+
+DimVehicle <- tbl(con2, "DimVehicle") %>% collect()
+
+# get route 90 BRT
+
+DimRoute_90 <- tbl(con2, "DimRoute") %>% 
+  filter(RouteDesc == "Red Line") %>%
+  collect()
+
+# get stops
+
+DimStop <- tbl(con2, "DimStop") %>%
+  collect()
+
+# get time (for hour of day OTP)
+
+DimTime <- tbl(con2, "DimTime") %>% collect()
+
+# get operators 
+
+DimUser <- tbl(con2, "DimUser") %>%
+  collect()
+
+# get blocks 
+
+DimBlock <- tbl(con2, "DimBlock") %>%
+  collect()
+
+# get trips, for direction
+
+DimTrip <- tbl(con2, "DimTrip") %>%
+  select(TripKey, DirectionDesc) %>%
+  collect()
+
+# get Avail adherence for yesteday
+
+FactTimepointAdherence_raw <- tbl(con2, "FactTimepointAdherence") %>%   select(-CoordinateList,-TimepointGeom, everything())%>% # CoordinateList and TimepointGeom break collection.
+  filter(DateKey == !!DimDate_yesterday$DateKey,
+         !is.na(DepartTimeVarianceSecs)) %>%
+  collect()
+
+# # get Avail adherence for whole month
+# 
+# FactTimepointAdherence_month <- tbl(con2, "FactTimepointAdherence") %>% 
+#   select(everything(),-CoordinateList,-TimepointGeom) %>% 
+#   filter(DateKey %in% local(DimDate_current_month$DateKey)) %>%
+#   collect()
+
+# get data since september, and then join it
+
+FactTimepointAdherence_since_september <- tbl(con2, "FactTimepointAdherence") %>% 
+  select(DateKey, PatternKey, RouteKey, UserKey, DepartStopKey, DepartTimeVarianceSecs, -CoordinateList,-TimepointGeom) %>% 
+  filter(DateKey %in% local(DimDate_since_september$DateKey),
+         !is.na(DepartTimeVarianceSecs)) %>%
+  collect()
+
+# consider only getting relevant fields--but note, anti-joins would have to be fixed, most likely.
+
+# FactTimepointAdherence_since_september <- tbl(con2, "FactTimepointAdherence") %>% 
+#   select(DateKey, DepartStopKey, PatternKey,DepartTimeVarianceSecs, RouteKey, -CoordinateList,-TimepointGeom) %>% 
+#   filter(DateKey %in% local(DimDate_since_september$DateKey)) %>%
+#   collect()
+
+# join
+
+FactTimepointAdherence_since_september_joined <- FactTimepointAdherence_since_september  %>%
+  left_join(DimStop, by = c("DepartStopKey" = "StopKey")) %>%
+  left_join(select(DimDate_since_september, DateKey, CalendarDate), by = "DateKey")
+
+# set route 90 OTP
+
+FactTimepointAdherence_90 <- FactTimepointAdherence_raw %>% 
+  filter(RouteKey %in% local(DimRoute_90$RouteKey))
+
+# join stops
+
+FactTimepointAdherence_joined <- FactTimepointAdherence_90 %>%
+  left_join(DimStop, by = c("DepartStopKey" = "StopKey")) %>%
+  left_join(select(DimDate_yesterday, DateKey, CalendarDate), by = "DateKey")
+
+# date/data check
+
+# nrow(FactTimepointAdherence_since_september_joined)
+# 
+# sort(unique(FactTimepointAdherence_since_september_joined$CalendarDate))
+# 
+# nrow(FactTimepointAdherence_raw )
+
+# set index for September data
+
+FactTimepointAdherence_since_september_joined$index <- 1:nrow(FactTimepointAdherence_since_september_joined)
+
+FactTimepointAdherence_since_september$index <- 1:nrow(FactTimepointAdherence_since_september)
+
+```
+
+```{r clean and transform data, results='asis'}
+# FactTimepointAdherence_raw %>%
+#   left_join(DimDate_yesterday, by = "DateKey") %>%
+#   distinct(CalendarDate) %>%
+#   View()
+
+# make fixed-route adherence set (DEPRECATED with Route 90 change)
+
+# FactTimepointAdherence_FR <- FactTimepointAdherence_raw %>%
+#   anti_join(FactTimepointAdherence_raw %>%
+#               left_join(DimStop, by = c("DepartStopKey" = "StopKey")) %>%
+#   left_join(select(DimDate_yesterday, DateKey, CalendarDate), by = "DateKey") %>%
+#               left_join(DimPattern, by = "PatternKey") %>%
+#               filter(DeadheadInd == 0) %>%
+#               filter(!is.na(DepartTimeVarianceSecs)) %>%
+#               filter(StopReportLabel %in% c(
+#                 "College&66th",    "DTC-G",           "DTC-L",
+#                 "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN" # notice anti-join here
+#               )), by = c("TransitAuthorityKey", "DateKey", "ScheduleKey", 
+#                          "ServiceLevelKey", "DepartStopKey", "ArriveStopKey", 
+#                          "RouteKey", "BlockKey", "TripKey", "PatternKey", 
+#                          "RunKey", "DepartTimeKey", "ArriveTimeKey", "UserKey",
+#                          "VehicleKey", "DepartShiftKey", "LoadDateTime", 
+#                          "TimepointSequence", "DetourInd", "ExcludeInd", 
+#                          "ExcludeDateTime", "DepartBoards", "DepartAlights", 
+#                          "DepartDoorCycle", "ArriveBoards", "ArriveAlights",
+#                          "ArriveDoorCycle", "DistanceFeetSchedule", 
+#                          "DistanceFeetActual", "DistanceFeetVariance", 
+#                          "DepartTimeSchedule", "DepartTimeActual",
+#                          "DepartTimeVarianceSecs", "ArriveTimeSchedule", 
+#                          "ArriveTimeActual", "ArriveTimeVarianceSecs", 
+#                          "EndTimeSchedule", "EndTimeActual", 
+#                          "EndTimeVarianceSecs", "TotalTimeScheduleSecs", 
+#                          "TotalTimeActualSecs", "TotalTimeVarianceSecs", 
+#                          "DriveTimeScheduleSecs", "DriveTimeActualSecs", 
+#                          "DriveTimeVarianceSecs", "LayoverTimeScheduleSecs",
+#                          "LayoverTimeActualSecs", "LayoverTimeVarianceSecs"))
+
+# define FR OTP - daily
+
+Avail_FR <- FactTimepointAdherence_raw %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(CalendarDate) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+  select(-CalendarDate)
+
+# define BRT OTP
+
+BRT_OTP_corp <- FactTimepointAdherence_joined %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  # filter(StopReportLabel %in% c(
+  #          "College&66th",    "DTC-G",           "DTC-L",
+  #          "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN"
+  #          )) %>% # this is consistent with how the rest of the Avail system records OTP. (ie, no UOI SB, etc.)
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  group_by(CalendarDate) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)))  %>%
+  mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+  select(-CalendarDate)
+
+# get all vehicle OTP (DEPRECATED)
+  
+# Vehicle_OTP <- FactTimepointAdherence_FR %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   left_join(DimDate_yesterday, by = "DateKey") %>%
+#   left_join(DimVehicle, by = "VehicleKey")%>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   group_by(MDCID) %>%
+#   summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE))) %>%
+#   select(MDT = MDCID, everything())
+
+# get best routes
+
+Best_Routes <- FactTimepointAdherence_raw %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(RouteReportLabel) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  top_n(., 3, wt = OTP) %>%
+  arrange(desc(OTP)) %>%
+    mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+  select(Route = RouteReportLabel, everything())
+
+# get worst routes
+
+Worst_Routes <- FactTimepointAdherence_raw %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(RouteReportLabel) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  top_n(., -3, wt = OTP) %>%
+  arrange(OTP)%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~percent(.,accuracy = 1))) %>%
+  select(Route = RouteReportLabel, everything())
+
+# get worst hour of day
+
+BRT_OTP_worst_hour <- FactTimepointAdherence_joined %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey"))%>% 
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  group_by(TimeHour, TimeAMPM) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)))  %>%
+  ungroup() %>%
+  top_n(., -3, wt = OTP) %>%
+  arrange(OTP) %>%
+    mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) 
+
+# make graph of all hours of the day for BRT (not yet included)
+
+# BRT_OTP_hour_of_day <- FactTimepointAdherence_joined %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+#   left_join(DimTime, by = c("DepartTimeKey" = "TimeKey"))%>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   group_by(Time24Hour) %>%
+#   summarise("On-time" =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             Early = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             Late = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)))  %>%
+#   pivot_longer(cols = c("On-time", Early, Late)) %>%
+#   ggplot(.) +
+#   geom_bar(aes(x = Time24Hour, y = value, fill = name),
+#      position="fill", stat="identity") +
+#   theme_minimal() +
+#   scale_fill_manual("", values = wesanderson::wes_palette("Darjeeling1"))+
+#   labs(x = "Hour of Day", y = "", title = "BRT Schedule Adherence by Hour of Day")+
+#   scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+  # ungroup() %>%
+  # top_n(., -3, wt = OTP) %>%
+  # arrange(OTP) %>%
+  #   mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) 
+
+# # divide into FR and non-FR sections, then get Month-to-Date OTP
+# 
+# FactTimepointAdherence_month_joined <- FactTimepointAdherence_month  %>%
+#   left_join(DimStop, by = c("DepartStopKey" = "StopKey")) %>%
+#   left_join(select(DimDate_current_month, DateKey, CalendarDate), by = "DateKey")
+# 
+# BRT_OTP_month <- FactTimepointAdherence_month_joined %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+#   filter(StopReportLabel %in% c(
+#            "College&66th", "College&66thNB" ,  "DTC-G",           "DTC-L",
+#            "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN", "UniverofIndplsS"
+#            )) %>% # slightly different than how I've done it in the past...
+#   left_join(DimDate_current_month, by = "DateKey") %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   group_by(MonthYearShortName) %>%
+#   summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)))  %>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1))
+# 
+# Avail_FR_month <- FactTimepointAdherence_month %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#     anti_join(FactTimepointAdherence_month_joined %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+#   filter(StopReportLabel %in% c(
+#            "College&66th", "College&66thNB" ,  "DTC-G",           "DTC-L",
+#            "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN", "UniverofIndplsS"
+#            )), by = c("TransitAuthorityKey.x", "DateKey", "ScheduleKey", "ServiceLevelKey", "DepartStopKey", "ArriveStopKey", "RouteKey", "BlockKey", "TripKey", "PatternKey", "RunKey", "DepartTimeKey", "ArriveTimeKey", "UserKey", "VehicleKey", "DepartShiftKey", "LoadDateTime", "TimepointSequence", "DetourInd", "ExcludeInd.x", "ExcludeDateTime", "DepartBoards", "DepartAlights", "DepartDoorCycle", "ArriveBoards", "ArriveAlights", "ArriveDoorCycle", "DistanceFeetSchedule", "DistanceFeetActual", "DistanceFeetVariance", "DepartTimeSchedule", "DepartTimeActual", "DepartTimeVarianceSecs", "ArriveTimeSchedule", "ArriveTimeActual", "ArriveTimeVarianceSecs", "EndTimeSchedule", "EndTimeActual", "EndTimeVarianceSecs", "TotalTimeScheduleSecs", "TotalTimeActualSecs", "TotalTimeVarianceSecs", "DriveTimeScheduleSecs", "DriveTimeActualSecs", "DriveTimeVarianceSecs", "LayoverTimeScheduleSecs", "LayoverTimeActualSecs", "LayoverTimeVarianceSecs", "DepartStopDetourInd", "PrecedingDetourInd", "PatternRecordID", "TransitAuthorityKey.y", "PatternName", "PatternDesc", "DimPatternerviceDesc", "PatternInternetServiceDesc", "PatternIVRServiceDesc", "PatternDirection", "PatternDirectionDesc", "TotalDistance", "TotalMinutes", "MakeupTimeFactor", "DeadheadInd", "DeadheadDesc", "HeadwayInd", "HeadwayDesc", "PatternActive", "PatternActiveDesc", "RouteRecordID", "HeadsignID", "ExternalPatternID", "ExternalAnnounceID", "ExcludeInd.y", "PatternInternalID", "PatternExternalID", "UniquePatternInternalID", "DimPatternortLabel")) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   left_join(DimDate_current_month, by = "DateKey") %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   group_by(MonthYearShortName) %>%
+#   summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE))) %>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) 
+
+BRT_OTP_since_september <- rbind(FactTimepointAdherence_since_september_joined %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  filter(StopReportLabel %in% c(
+    "College&66th", "College&66thNB",  "DTC-G",           "DTC-L",
+    "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN", "UniverofIndplsS"
+  )) %>% # slightly different than how I've done it in the past...
+    left_join(select(DimDate_since_september, DateKey, 
+                     MonthYearShortName, MonthYearSort), 
+              by = "DateKey") %>% # note this
+    filter(DateKey < 7958) %>% # note this
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  left_join(DimRoute, by = "RouteKey"), # this is rbind break
+  FactTimepointAdherence_since_september_joined %>%
+    left_join(DimPattern, by = "PatternKey") %>%
+    filter(DeadheadInd == 0) %>%
+    filter(!is.na(DepartTimeVarianceSecs)) %>%
+    filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+    left_join(select(DimDate_since_september, DateKey, 
+                     MonthYearShortName, MonthYearSort), 
+              by = "DateKey") %>% # note this
+    filter(DateKey >= 7958 ) %>% # note this
+    mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+           Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+           On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                         DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+    left_join(DimRoute, by = "RouteKey")) %>% # end rbind
+    group_by(MonthYearShortName, MonthYearSort) %>%
+    summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+                (sum(Early, na.rm = TRUE) +
+                   sum(Late, na.rm = TRUE) +
+                   sum(On_Time, na.rm = TRUE)),
+              "Early %" = sum(Early, na.rm = TRUE) /
+                (sum(Early, na.rm = TRUE) +
+                   sum(Late, na.rm = TRUE) +
+                   sum(On_Time, na.rm = TRUE)),
+              "Late %" = sum(Late, na.rm = TRUE) /
+                (sum(Early, na.rm = TRUE) +
+                   sum(Late, na.rm = TRUE) +
+                   sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+              "Total Departures" = (sum(Early, na.rm = TRUE) +
+                                    sum(Late, na.rm = TRUE) +
+                                    sum(On_Time, na.rm = TRUE)))  %>%
+    mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+    ungroup() %>%
+    arrange(MonthYearSort) %>%
+    select(everything(), -MonthYearSort)
+
+# looks like local is including BRT... nrow() should be (1633155 -  117629)
+
+Avail_FR_since_september <- FactTimepointAdherence_since_september %>% 
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  anti_join(rbind(FactTimepointAdherence_since_september_joined %>%
+                    left_join(DimPattern, by = "PatternKey") %>%
+                    filter(DeadheadInd == 0) %>%
+                    filter(!is.na(DepartTimeVarianceSecs)) %>%
+                    filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                    left_join(select(DimDate_since_september, DateKey, 
+                                     MonthYearShortName, MonthYearSort), 
+                              by = "DateKey") %>% # note this
+                    filter(DateKey < 7958) %>% # note this
+                    filter(StopReportLabel %in% c(
+                      "College&66th", "College&66thNB",  "DTC-G",           "DTC-L",
+                      "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN", "UniverofIndplsS"
+                    )) %>% # slightly different than how I've done it in the past...
+                    mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+                           Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+                           On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                                         DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+                    left_join(DimRoute, by = "RouteKey"), # this is rbind break
+                  FactTimepointAdherence_since_september_joined %>%
+                    left_join(DimPattern, by = "PatternKey") %>%
+                    filter(DeadheadInd == 0) %>%
+                    filter(!is.na(DepartTimeVarianceSecs)) %>%
+                    filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                    left_join(select(DimDate_since_september, DateKey, 
+                                     MonthYearShortName, MonthYearSort), 
+                              by = "DateKey") %>% # note this
+                    filter(DateKey >= 7958 ) %>% # note this
+                    mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+                           Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+                           On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                                         DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+                    left_join(DimRoute, by = "RouteKey")), # this is end of rbind
+           by = c("index")) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_since_september, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(MonthYearShortName, MonthYearSort) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                 sum(Late, na.rm = TRUE) +
+                 sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                 sum(Late, na.rm = TRUE) +
+                 sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                 sum(Late, na.rm = TRUE) +
+                 sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                                  sum(Late, na.rm = TRUE) +
+                                  sum(On_Time, na.rm = TRUE))) %>%
+  mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+  ungroup() %>%
+  arrange(MonthYearSort) %>%
+  select(everything(), -MonthYearSort)
+
+# BRT + FR (fixed route) OTP since September
+
+BRT_FR_OTP_since_september <- FactTimepointAdherence_since_september_joined %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+    left_join(select(DimDate_since_september, DateKey, 
+                     MonthYearShortName, MonthYearSort), 
+              by = "DateKey") %>% # note this
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+    group_by(MonthYearShortName, MonthYearSort) %>%
+    summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+                (sum(Early, na.rm = TRUE) +
+                   sum(Late, na.rm = TRUE) +
+                   sum(On_Time, na.rm = TRUE)),
+              "Early %" = sum(Early, na.rm = TRUE) /
+                (sum(Early, na.rm = TRUE) +
+                   sum(Late, na.rm = TRUE) +
+                   sum(On_Time, na.rm = TRUE)),
+              "Late %" = sum(Late, na.rm = TRUE) /
+                (sum(Early, na.rm = TRUE) +
+                   sum(Late, na.rm = TRUE) +
+                   sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+              "Total Departures" = (sum(Early, na.rm = TRUE) +
+                                    sum(Late, na.rm = TRUE) +
+                                    sum(On_Time, na.rm = TRUE)))  %>%
+    mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+    ungroup() %>%
+    arrange(MonthYearSort) %>%
+    select(everything(), -MonthYearSort)
+
+# get local routes for last month
+
+Avail_FR_by_route_last_month <- FactTimepointAdherence_since_september %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(DeadheadInd.x == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  filter(!RouteKey %in% DimRoute_90$RouteKey) %>% # note this
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_since_september, by = "DateKey") %>%
+  filter(DateKey >= DimDate_last_month_first_day, 
+         DateKey <= DimDate_last_month_last_day) %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(RouteFareboxID.y) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                 sum(Late, na.rm = TRUE) +
+                 sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                 sum(Late, na.rm = TRUE) +
+                 sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                 sum(Late, na.rm = TRUE) +
+                 sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                                  sum(Late, na.rm = TRUE) +
+                                  sum(On_Time, na.rm = TRUE))) %>%
+  mutate_at(., c("OTP", "Early %", "Late %"), ~scales::percent(., accuracy = 1)) %>%
+  ungroup() %>%
+  arrange(RouteFareboxID.y) %>%
+  select(Route = RouteFareboxID.y, everything())
+
+# (older methods are below - revised 3/20/20)
+
+# BRT_OTP_since_september <- FactTimepointAdherence_since_september_joined %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+#   filter(StopReportLabel %in% c(
+#            "College&66th",   "DTC-G",           "DTC-L",
+#            "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN"
+#            )) %>% # slightly different than how I've done it in the past...
+#   left_join(DimDate_since_september, by = "DateKey") %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   group_by(MonthYearShortName, MonthYearSort) %>%
+#   summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)))  %>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+#   ungroup() %>%
+#   arrange(MonthYearSort) %>%
+#   select(everything(), -MonthYearSort)
+# 
+# Avail_FR_since_september <- FactTimepointAdherence_since_september %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#     anti_join(FactTimepointAdherence_since_september_joined %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+#   filter(StopReportLabel %in% c(
+#            "College&66th",  "DTC-G",           "DTC-L",
+#            "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN"
+#            )),by = c("TransitAuthorityKey.x", "DateKey", "ScheduleKey", "ServiceLevelKey", "DepartStopKey", "ArriveStopKey", "RouteKey", "BlockKey", "TripKey", "PatternKey", "RunKey", "DepartTimeKey", "ArriveTimeKey", "UserKey", "VehicleKey", "DepartShiftKey", "LoadDateTime", "TimepointSequence", "DetourInd", "ExcludeInd.x", "ExcludeDateTime", "DepartBoards", "DepartAlights", "DepartDoorCycle", "ArriveBoards", "ArriveAlights", "ArriveDoorCycle", "DistanceFeetSchedule", "DistanceFeetActual", "DistanceFeetVariance", "DepartTimeSchedule", "DepartTimeActual", "DepartTimeVarianceSecs", "ArriveTimeSchedule", "ArriveTimeActual", "ArriveTimeVarianceSecs", "EndTimeSchedule", "EndTimeActual", "EndTimeVarianceSecs", "TotalTimeScheduleSecs", "TotalTimeActualSecs", "TotalTimeVarianceSecs", "DriveTimeScheduleSecs", "DriveTimeActualSecs", "DriveTimeVarianceSecs", "LayoverTimeScheduleSecs", "LayoverTimeActualSecs", "LayoverTimeVarianceSecs", "DepartStopDetourInd", "PrecedingDetourInd", "PatternRecordID", "TransitAuthorityKey.y", "PatternName", "PatternDesc", "DimPatternerviceDesc", "PatternInternetServiceDesc", "PatternIVRServiceDesc", "PatternDirection", "PatternDirectionDesc", "TotalDistance", "TotalMinutes", "MakeupTimeFactor", "DeadheadInd", "DeadheadDesc", "HeadwayInd", "HeadwayDesc", "PatternActive", "PatternActiveDesc", "RouteRecordID", "HeadsignID", "ExternalPatternID", "ExternalAnnounceID", "ExcludeInd.y", "PatternInternalID", "PatternExternalID", "UniquePatternInternalID", "DimPatternortLabel")) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   left_join(DimDate_since_september, by = "DateKey") %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   group_by(MonthYearShortName, MonthYearSort) %>%
+#   summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE))) %>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) %>%
+#   ungroup() %>%
+#   arrange(MonthYearSort) %>%
+#   select(everything(), -MonthYearSort)
+# 
+# # get local routes for last month
+# 
+# Avail_FR_by_route_last_month <- FactTimepointAdherence_since_september %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   filter(DeadheadInd.x == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#     anti_join(FactTimepointAdherence_since_september_joined %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+#   filter(StopReportLabel %in% c(
+#            "College&66th",  "DTC-G",           "DTC-L",
+#            "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN"
+#            )),
+#   by = c("DateKey", "ScheduleKey", "ServiceLevelKey", "DepartStopKey", "ArriveStopKey", "RouteKey", "BlockKey", "TripKey", "PatternKey", "RunKey", "DepartTimeKey", "ArriveTimeKey", "UserKey", "VehicleKey", "DepartShiftKey", "LoadDateTime", "TimepointSequence", "DetourInd", "ExcludeInd.x", "ExcludeDateTime", "DepartBoards", "DepartAlights", "DepartDoorCycle", "ArriveBoards", "ArriveAlights", "ArriveDoorCycle", "DistanceFeetSchedule")) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   left_join(DimDate_since_september, by = "DateKey") %>%
+#   filter(DateKey >= DimDate_last_month_first_day, 
+#          DateKey <= DimDate_last_month_last_day) %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   group_by(RouteFareboxID.y) %>%
+#   summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE))) %>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), ~scales::percent(., accuracy = 1)) %>%
+#   ungroup() %>%
+#   arrange(RouteFareboxID.y) %>%
+#   select(Route = RouteFareboxID.y, everything())
+
+# get ten worst operators for Fixed Route
+
+Worst_Operators_FR <- FactTimepointAdherence_raw %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(LogonID, UserReportLabel) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  ungroup() %>%
+  top_n(., -10, wt = OTP) %>%
+  arrange(OTP)%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Operator = UserReportLabel, LogonID, everything())
+
+# Get ten lowest OTP BRT operators
+
+Worst_Operators_BRT <- FactTimepointAdherence_raw %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(LogonID, UserReportLabel) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  ungroup() %>%
+  top_n(., -10, wt = OTP) %>%
+  arrange(OTP)%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Operator = UserReportLabel, LogonID, everything())
+
+# get all operators (to hide in button)
+
+all_operators_last_month <- FactTimepointAdherence_since_september %>%
+  filter(DateKey %in% DimDate_last_month$DateKey) %>% # filter for last month
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(LogonID, UserReportLabel) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  arrange(desc(OTP))%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Operator = UserReportLabel, LogonID, everything())
+
+# get new 90 percent club
+
+ninety_percent_club_last_month <- FactTimepointAdherence_since_september %>%
+  filter(DateKey %in% DimDate_last_month$DateKey) %>% # filter for last month
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(LogonID, UserReportLabel) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  arrange(desc(OTP))%>%
+  filter(`Total Departures` >= 675, OTP >= .9) %>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Operator = UserReportLabel, LogonID, everything())
+
+# ten lowest local blocks
+
+Worst_blocks_local <- FactTimepointAdherence_raw %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimBlock, by = "BlockKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(BlockFareboxID) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  ungroup() %>%
+  top_n(., -10, wt = OTP) %>%
+  arrange(OTP)%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Block = BlockFareboxID, everything())
+  
+# ten worst blocks BRT
+  
+Worst_blocks_BRT <- FactTimepointAdherence_raw %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimBlock, by = "BlockKey")%>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(BlockFareboxID) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  ungroup() %>%
+  top_n(., -10, wt = OTP) %>%
+  arrange(OTP)%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Block = BlockFareboxID, everything())
+
+# ten best blocks BRT
+  
+Best_blocks_BRT <- FactTimepointAdherence_raw %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimBlock, by = "BlockKey")%>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(BlockFareboxID) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  ungroup() %>%
+  top_n(., 10, wt = OTP) %>%
+  arrange(desc(OTP))%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Block = BlockFareboxID, everything())
+
+# Get ten best OTP BRT operators
+
+Best_Operators_BRT <- FactTimepointAdherence_raw %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(LogonID, UserReportLabel) %>%
+  summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Early %" = sum(Early, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "Late %" = sum(Late, na.rm = TRUE) /
+              (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE)),
+            "On-time Departures" = sum(On_Time, na.rm = TRUE),
+            "Total Departures" = (sum(Early, na.rm = TRUE) +
+                        sum(Late, na.rm = TRUE) +
+                        sum(On_Time, na.rm = TRUE))) %>%
+  ungroup() %>%
+  top_n(., 10, wt = OTP) %>%
+  arrange(desc(OTP))%>%
+  mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+  select(Operator = UserReportLabel, LogonID, everything())
+
+# # what is YTD OTP for BRT + FR? (# consider adding this...)
+# 
+# YTD_BRT_FR <- FactTimepointAdherence_since_september %>% # consider adding this...
+# left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   left_join(DimDate_since_september, by = "DateKey") %>%
+#   filter(DateKey >= 7939, CalendarDate <= yesterday_Avail) %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   group_by(Year) %>%
+#   summarise(OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE))) %>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), ~percent(., accuracy = 1)) 
+# 
+YTD_BRT_FR_up_to_this_month <- FactTimepointAdherence_since_september %>% # consider adding this...
+left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_since_september, by = "DateKey") %>%
+  filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  arrange(MonthYearSort) %>%
+  group_by(MonthYearSort) %>%
+  arrange(MonthYearSort) %>%
+    summarise(On_Time =  sum(On_Time),
+            Early = sum(Early),
+            Late = sum(Late) ,
+            Total_Departures = (sum(Early) +
+                        sum(Late) +
+                        sum(On_Time))) %>%
+  mutate(YTD_On_Time =  cumsum(On_Time),
+            YTD_Early = cumsum(Early),
+            YTD_Late = cumsum(Late)) %>%
+  mutate("YTD OTP" =  YTD_On_Time /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD Early %" = YTD_Early /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD Late %" = YTD_Late /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD On-time Departures" = YTD_On_Time,
+            "YTD Total Departures" = YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time) %>%
+  mutate_at(., c("YTD OTP", "YTD Early %", "YTD Late %"), ~percent(., accuracy = 1)) %>%
+  ungroup() %>%
+  arrange(MonthYearSort) 
+
+YTD_FR_up_to_this_month <- FactTimepointAdherence_since_september %>% 
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  anti_join(rbind(FactTimepointAdherence_since_september_joined %>%
+                    left_join(DimPattern, by = "PatternKey") %>%
+                    filter(DeadheadInd == 0) %>%
+                    filter(!is.na(DepartTimeVarianceSecs)) %>%
+                    filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                    left_join(select(DimDate_since_september, DateKey, 
+                                     MonthYearShortName, MonthYearSort), 
+                              by = "DateKey") %>% # note this
+                    filter(DateKey < 7958) %>% # note this
+                    filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>%
+                    filter(StopReportLabel %in% c(
+                      "College&66th", "College&66thNB",  "DTC-G",           "DTC-L",
+                      "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN", "UniverofIndplsS"
+                    )) %>% # slightly different than how I've done it in the past...
+                    mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+                           Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+                           On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                                         DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+                    left_join(DimRoute, by = "RouteKey"), # this is rbind break
+                  FactTimepointAdherence_since_september_joined %>%
+                    left_join(DimPattern, by = "PatternKey") %>%
+                    filter(DeadheadInd == 0) %>%
+                    filter(!is.na(DepartTimeVarianceSecs)) %>%
+                    filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                    left_join(select(DimDate_since_september, DateKey,
+                                     MonthYearShortName, MonthYearSort), 
+                              by = "DateKey") %>% # note this
+                    filter(DateKey >= 7958 ) %>% # note this
+                    filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>%
+                    mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+                           Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+                           On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                                         DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+                    left_join(DimRoute, by = "RouteKey")), # this is end of rbind
+            by = c("index")) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_since_september, by = "DateKey") %>%
+  filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  arrange(MonthYearSort) %>%
+  group_by(MonthYearSort) %>%
+  arrange(MonthYearSort) %>%
+    summarise(On_Time =  sum(On_Time),
+            Early = sum(Early),
+            Late = sum(Late) ,
+            Total_Departures = (sum(Early) +
+                        sum(Late) +
+                        sum(On_Time))) %>%
+  mutate(YTD_On_Time =  cumsum(On_Time),
+            YTD_Early = cumsum(Early),
+            YTD_Late = cumsum(Late)) %>%
+  mutate("YTD OTP" =  YTD_On_Time /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD Early %" = YTD_Early /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD Late %" = YTD_Late /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD On-time Departures" = YTD_On_Time,
+            "YTD Total Departures" = YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time) %>%
+  mutate_at(., c("YTD OTP", "YTD Early %", "YTD Late %"), ~percent(., accuracy = 1)) %>%
+  ungroup() %>%
+  arrange(MonthYearSort) 
+
+YTD_BRT_up_to_this_month <- rbind(FactTimepointAdherence_since_september_joined %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+  filter(StopReportLabel %in% c(
+    "College&66th", "College&66thNB",  "DTC-G",           "DTC-L",
+    "Meridian&38thNB", "Meridian&38thSB", "UniverofIndplsN", "UniverofIndplsS"
+  )) %>% # slightly different than how I've done it in the past...
+    left_join(select(DimDate_since_september, DateKey, 
+                     MonthYearShortName, MonthYearSort), 
+              by = "DateKey") %>% # note this
+    filter(DateKey < 7958) %>% # note this
+    filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>% # jan 1st, 2020
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  left_join(DimRoute, by = "RouteKey"), # this is rbind break
+  FactTimepointAdherence_since_september_joined %>%
+    left_join(DimPattern, by = "PatternKey") %>%
+    filter(DeadheadInd == 0) %>%
+    filter(!is.na(DepartTimeVarianceSecs)) %>%
+    filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+    left_join(select(DimDate_since_september, DateKey, 
+                     MonthYearShortName, MonthYearSort), 
+              by = "DateKey") %>% # note this
+    filter(DateKey >= 7958 ) %>% # note this
+    filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>% # jan 1st, 2020
+    mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+           Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+           On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                         DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+    left_join(DimRoute, by = "RouteKey")) %>% # end rbind
+    filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>%
+  group_by(MonthYearSort) %>%
+  arrange(MonthYearSort) %>%
+    summarise(On_Time =  sum(On_Time),
+            Early = sum(Early),
+            Late = sum(Late) ,
+            Total_Departures = (sum(Early) +
+                        sum(Late) +
+                        sum(On_Time))) %>%
+  mutate(YTD_On_Time =  cumsum(On_Time),
+            YTD_Early = cumsum(Early),
+            YTD_Late = cumsum(Late)) %>%
+  mutate("YTD OTP" =  YTD_On_Time /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD Early %" = YTD_Early /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD Late %" = YTD_Late /
+              (YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time),
+            "YTD On-time Departures" = YTD_On_Time,
+            "YTD Total Departures" = YTD_Early +
+                        YTD_Late +
+                        YTD_On_Time) %>%
+  mutate_at(., c("YTD OTP", "YTD Early %", "YTD Late %"), ~percent(., accuracy = 1)) %>%
+  ungroup() %>%
+  arrange(MonthYearSort) 
+
+# now combine YTD values into something a little more presentable
+
+# make monthyearsort a little more palatable (testing)
+
+# YTD_BRT_up_to_this_month 
+# YTD_FR_up_to_this_month 
+# YTD_BRT_FR_up_to_this_month 
+# 
+# YTD_BRT_FR_up_to_this_month %>%
+#   left_join(distinct(select(DimDate_since_september, 
+#                      MonthYearShortName, MonthYearSort)), by = "MonthYearSort") %>%
+#   select("Month - Year" = MonthYearShortName, "YTD OTP", "YTD Early %", "YTD Late %", "YTD Total Departures")
+
+# earliest departure for operators with earliest departures (see below)
+
+# Earliest_Departures_FR <- FactTimepointAdherence_raw %>%
+#   left_join(DimUser, by = "UserKey") %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+#   left_join(DimDate_yesterday, by = "DateKey") %>%
+#   left_join(DimBlock, by = "BlockKey") %>%
+#   left_join(DimStop, by = c("DepartStopKey" = "StopKey"))%>%
+#   left_join(DimTrip, by = "TripKey") %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   group_by(LogonID, UserReportLabel, RouteFareboxID, BlockFareboxID, StopDesc, DirectionDesc) %>%
+#   summarise(Earliest_Departure_Minutes = signif(min(DepartTimeVarianceSecs)/60, digits = 3),
+#             OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE))) %>%
+#   ungroup() %>%
+#   top_n(., -10, wt = Earliest_Departure_Minutes) %>%
+#   arrange(Earliest_Departure_Minutes)%>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+#   select(Operator = UserReportLabel, LogonID, Route = RouteFareboxID, 
+#          Block = BlockFareboxID, Direction = DirectionDesc, Timepoint = StopDesc,
+#          Minutes_Early = Earliest_Departure_Minutes)
+
+# test adding stuff to earliest departure-- like date and time
+
+# FactTimepointAdherence_raw %>%
+#   left_join(DimUser, by = "UserKey") %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+#   left_join(DimDate_yesterday, by = "DateKey") %>%
+#   left_join(DimBlock, by = "BlockKey") %>%
+#   left_join(DimStop, by = c("DepartStopKey" = "StopKey"))%>%
+#   left_join(DimTrip, by = "TripKey") %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   group_by(LogonID, UserReportLabel, RouteFareboxID, BlockFareboxID, StopDesc, DirectionDesc) %>%
+#   summarise(Earliest_Departure_Minutes = signif(min(DepartTimeVarianceSecs)/60, digits = 3),
+#             OTP =  sum(On_Time, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Early %" = sum(Early, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Late %" = sum(Late, na.rm = TRUE) /
+#               (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             "Total Departures" = (sum(Early, na.rm = TRUE) +
+#                         sum(Late, na.rm = TRUE) +
+#                         sum(On_Time, na.rm = TRUE)),
+#             Scheduled_Departure = first(DepartTimeSchedule[DepartTimeVarianceSecs = last(min(DepartTimeVarianceSecs))]),
+#             Actual_Departure = first(DepartTimeActual[DepartTimeVarianceSecs = last(min(DepartTimeVarianceSecs))])) %>%
+#   ungroup() %>%
+#   top_n(., -10, wt = Earliest_Departure_Minutes) %>%
+#   arrange(Earliest_Departure_Minutes)%>%
+#   mutate_at(., c("OTP", "Early %", "Late %"), list(~scales::percent(.,accuracy = 1))) %>%
+#   select(Operator = UserReportLabel, LogonID, Route = RouteFareboxID, 
+#          Block = BlockFareboxID, Direction = DirectionDesc, Timepoint = StopDesc,
+#          Minutes_Early = Earliest_Departure_Minutes, Scheduled_Departure, Actual_Departure) %>%
+#   View() # wierd results... review some
+
+# FactTimepointAdherence_raw %>%
+#   left_join(DimUser, by = "UserKey") %>%
+#   left_join(DimPattern, by = "PatternKey") %>%
+#   filter(DeadheadInd == 0) %>%
+#   filter(!is.na(DepartTimeVarianceSecs)) %>%
+#   left_join(DimRoute, by = "RouteKey") %>%
+#   filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+#   left_join(DimDate_yesterday, by = "DateKey") %>%
+#   left_join(DimBlock, by = "BlockKey") %>%
+#   left_join(DimStop, by = c("DepartStopKey" = "StopKey"))%>%
+#   left_join(DimTrip, by = "TripKey") %>%
+#   mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+#          Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+#          On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+#                                        DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+#   filter(LogonID == 9417, RouteFareboxID == 902, BlockFareboxID == 9005) %>%
+#   arrange(DepartTimeKey) %>%
+#   View()
+
+# what if instead we just filtered for the earliest departures? then could include other data...
+
+Earliest_Departures_FR <- FactTimepointAdherence_raw %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  filter(!RouteKey %in% DimRoute_90$RouteKey) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimBlock, by = "BlockKey") %>%
+  left_join(DimStop, by = c("DepartStopKey" = "StopKey"))%>%
+  left_join(DimTrip, by = "TripKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  group_by(LogonID, UserReportLabel, RouteFareboxID, BlockFareboxID, StopDesc, DirectionDesc) %>%
+  filter(DepartTimeVarianceSecs == min(DepartTimeVarianceSecs)) %>%
+  ungroup() %>%
+  top_n(., -10, wt = DepartTimeVarianceSecs) %>%
+  arrange(DepartTimeVarianceSecs)%>%
+  mutate(Minutes_Early = signif(DepartTimeVarianceSecs/60, digits = 3)) %>%
+  select(Operator = UserReportLabel, LogonID, Route = RouteFareboxID, 
+         Block = BlockFareboxID, Direction = DirectionDesc, Timepoint = StopDesc,
+         'Minutes Early' = Minutes_Early, 'Scheduled Depart Time' = DepartTimeSchedule, 
+         'Actual Depart Time' = DepartTimeActual)  # this produces same result... soo...
+
+# YTD for BRT
+
+# YTD for OTP
+
+# all early departures
+
+early_departures <- FactTimepointAdherence_raw %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimBlock, by = "BlockKey") %>%
+  left_join(DimStop, by = c("DepartStopKey" = "StopKey"))%>%
+  left_join(DimTrip, by = "TripKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  filter(Early == 1) %>%
+  arrange(DepartTimeVarianceSecs)%>%
+  mutate(Minutes_Early = signif(DepartTimeVarianceSecs/60, digits = 3),
+         DepartTimeSchedule = format(DepartTimeSchedule, "%H:%M:%S"),
+         DepartTimeActual = format(DepartTimeActual, "%H:%M:%S")) %>%
+  select(Date = CalendarDateChar, Operator = UserReportLabel, LogonID, Block = BlockFareboxID, Route = RouteFareboxID, Direction = DirectionDesc, Timepoint = StopDesc, "Stop ID" = StopID,
+         'Minutes Early' = Minutes_Early, 'Scheduled Depart Time' = DepartTimeSchedule, 
+         'Actual Depart Time' = DepartTimeActual) 
+```
+
+```{r get, clean, and transform supervisor data}
+
+con <- DBI::dbConnect(odbc::odbc(), Driver = "SQL Server", Server = "IPTC-TMDATAMART\\TMDATAMART", 
+                      Database = "TMDATAMART", Port = 1433)
+  
+Hastus_Drivers_TMDM <- tbl(con, "Hastus_Drivers") %>% collect()
+
+# Also clean up some values
+
+Hastus_Drivers_TMDM$EmployeeID <- as.numeric(Hastus_Drivers_TMDM$EmployeeID)
+Hastus_Drivers_TMDM$Supervisor <- str_trim(Hastus_Drivers_TMDM$Supervisor,
+                                           "both")
+
+Hastus_Drivers_TMDM <- Hastus_Drivers_TMDM %>%
+mutate(Supervisor = ifelse(is.na(Supervisor), "Unknown Supervisor", 
+                           ifelse(Supervisor == "Supervisor Unknown", "Unknown Supervisor", Supervisor))) 
+
+supervisor_names <- Hastus_Drivers_TMDM$Supervisor
+
+supervisor_names_2 <- ifelse(str_detect(supervisor_names, "^[:upper:]+$"), # first pull out first letter
+                       substr(supervisor_names,1,1),supervisor_names) 
+
+supervisor_names_3 <- ifelse(str_detect(supervisor_names, "^[:upper:]+$"), # then remove first letter
+                       str_sub(supervisor_names, 2),supervisor_names) 
+
+supervisor_names_4 <- ifelse(str_detect(supervisor_names_3, "^[:upper:]+$"), # then add text to end...
+                       paste0(supervisor_names_3, ", ", supervisor_names_2),supervisor_names_3)
+
+# now merge back to OG dataset.
+
+Hastus_Drivers_TMDM$Supervisor <- supervisor_names_4
+```
+
+```{r develop team adherence datasets, results = 'asis'}
+
+last_week_supervisor_OTP <- FactTimepointAdherence_since_september %>%
+  filter(DateKey %in% DimDate_last_week$DateKey) %>% 
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  left_join(Hastus_Drivers_TMDM, by = c("LogonID" = "EmployeeID")) %>% 
+  filter(Supervisor != "Unknown Supervisor") %>% 
+  group_by(Supervisor) %>%
+  summarise('On-Time %' = sum(On_Time) / (sum(Early) +
+                        sum(Late) +
+                        sum(On_Time)),
+            'Early %'  = sum(Early) / (sum(Early) +
+                        sum(Late) +
+                        sum(On_Time)),
+            'Late %' = sum(Late) / (sum(Early) +
+                        sum(Late) +
+                        sum(On_Time)),
+            'On-time Departures' =  sum(On_Time),
+            'Total Departures' = (sum(Early) +
+                        sum(Late) +
+                        sum(On_Time))) %>%
+  rbind(FactTimepointAdherence_since_september %>%
+  filter(DateKey %in% DimDate_last_week$DateKey) %>% 
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+          left_join(Hastus_Drivers_TMDM, by = c("LogonID" = "EmployeeID")) %>%
+          filter(Supervisor == "Unknown Supervisor") %>%
+          group_by(Supervisor) %>%
+          summarise('On-Time %' = sum(On_Time) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+                    'Early %'  = sum(Early) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+                    'Late %' = sum(Late) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+                    'On-time Departures' =  sum(On_Time),
+                    'Total Departures' = (sum(Early) +  sum(Late) +  sum(On_Time)))) %>%
+  mutate_at(., c("On-Time %", "Early %", "Late %"), ~scales::percent(., accuracy = 1)) 
+
+last_week_operator_OTP <- FactTimepointAdherence_since_september %>%
+  filter(DateKey %in% DimDate_last_week$DateKey) %>% 
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+  left_join(Hastus_Drivers_TMDM, by = c("LogonID" = "EmployeeID")) %>% # but fix super name
+  filter(Supervisor != "Unknown Supervisor") %>% 
+  group_by(LogonID, UserReportLabel, Supervisor) %>%
+  summarise('On-Time %' = sum(On_Time) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+            'Early %'  = sum(Early) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+            'Late %' = sum(Late) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+            'On-time Departures' =  sum(On_Time),
+            'Total Departures' = (sum(Early) +  sum(Late) +  sum(On_Time))) %>%
+  rbind(FactTimepointAdherence_since_september %>%
+  filter(DateKey %in% DimDate_last_week$DateKey) %>% 
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  filter(DeadheadInd == 0) %>%
+  filter(!is.na(DepartTimeVarianceSecs)) %>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  mutate(Late = as.numeric(ifelse(DepartTimeVarianceSecs >= 300, "1", "0")),
+         Early = as.numeric(ifelse(DepartTimeVarianceSecs <= -60, "1", "0")),
+         On_Time = as.numeric(ifelse(DepartTimeVarianceSecs < 300 &
+                                       DepartTimeVarianceSecs > -60  , "1", "0"))) %>%
+          left_join(Hastus_Drivers_TMDM, by = c("LogonID" = "EmployeeID")) %>%
+          filter(Supervisor == "Unknown Supervisor") %>%
+          group_by(LogonID, UserReportLabel, Supervisor) %>%
+          summarise('On-Time %' = sum(On_Time) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+                    'Early %'  = sum(Early) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+                    'Late %' = sum(Late) / (sum(Early) +  sum(Late) +  sum(On_Time)),
+                    'On-time Departures' =  sum(On_Time),
+                    'Total Departures' = (sum(Early) +  sum(Late) +  sum(On_Time)))) %>%
+  mutate_at(., c("On-Time %", "Early %", "Late %"), ~scales::percent(., accuracy = 1))  %>%
+  select(Operator = UserReportLabel, LogonID, everything())
+
+```
+
+```{r remove schedule adherence data to clear up memory, results='asis'}
+rm(FactTimepointAdherence_raw)
+rm(FactTimepointAdherence_since_september)
+```
+
+```{r collect headway adherence data, results='asis'}
+
+FactHeadwayAdherence <- tbl(con2, "FactHeadwayAdherence") %>%
+  filter(DateKey %in% !!DimDate_since_september$DateKey,
+         RouteKey %in% local(DimRoute_90$RouteKey),
+         !is.na(DepartIntervalTimeActualSecs)) %>%
+  select(DateKey, RouteKey, BlockKey, StopKey, PatternKey, VehicleKey, UserKey, DepartTimeSchedule, 
+         DepartTimeActual, DepartTimeKey, DepartIntervalTimeActualSecs, ScheduledDepartIntervalTimeSecs) %>%
+  collect()
+           
+```
+
+```{r set some stop variables for pre-90 split stops, results = 'asis'}
+
+true_90_stops <- FactHeadwayAdherence %>%
+  filter(DateKey >= 7958) %>%
+  left_join(DimStop, by = "StopKey") %>%
+  distinct(StopReportLabel)
+```
+
+```{r transform headway adherence data pt 1, results='asis'}
+
+# BRT Headway Adherence
+
+BRT_HA <- FactHeadwayAdherence %>% # need to add direction to the mix...
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  filter(DateKey == DimDate_yesterday$DateKey) %>% 
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                 ) %>%
+  # filter(!is.na(Percent_Headway)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                 ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+  group_by(Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  pivot_wider(names_from = Headway_Status, values_from = c(Percent, n)) %>%
+  select("Bunched" = "Percent_Bunched", 
+         "Expected" = "Percent_Expected", 
+         "Gapped" = "Percent_Gapped",
+         everything()) %>%
+  mutate_at(., c("Bunched", "Expected", "Gapped"), ~scales::percent(., accuracy = 1)) %>%
+  rowwise() %>%
+  mutate("Total Headways" = sum(n_Bunched, n_Expected, n_Gapped, na.rm = T)) %>%
+  select(-starts_with("n_"))
+
+```
+
+```{r transform headway adherence data pt 2, results='asis'}
+
+# now get worst hours HA
+
+Worst_Hour_HA <- FactHeadwayAdherence %>% # need to add direction to the mix...
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey")) %>%
+  filter(DateKey == DimDate_yesterday$DateKey) %>%  
+  mutate(Depart_Actual_Hour = sub("^0", "", format(strptime(substring(DepartTimeActual, 12, 13),
+                                              format = '%H'), '%I %p'))) %>% 
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                 ) %>%
+  # filter(!is.na(Percent_Headway)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                 ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+  group_by(Depart_Actual_Hour, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  pivot_wider(names_from = Headway_Status, values_from = c(Percent, n)) %>%
+  select("Bunched" = "Percent_Bunched", 
+         "Expected" = "Percent_Expected", 
+         "Gapped" = "Percent_Gapped",
+         everything()) %>%
+  ungroup() %>%
+  top_n(., -3, wt = Expected) %>% 
+  arrange(Expected) %>%
+  mutate_at(., c("Bunched", "Expected", "Gapped"), ~scales::percent(., accuracy = 1))  %>%
+  rowwise() %>%
+  mutate("Total Headways" = sum(n_Bunched, n_Expected, n_Gapped, na.rm = T)) %>%
+  select("Hour" = Depart_Actual_Hour, everything(), -starts_with("n_"))
+
+
+```
+
+```{r transform headway adherence data pt 3, results='asis'}
+
+# Lowest Performing Operators, BRT
+
+Lowest_Op_BRT_HA <- FactHeadwayAdherence %>% 
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey")) %>%
+  left_join(DimUser, by = "UserKey") %>%
+  filter(DateKey == DimDate_yesterday$DateKey) %>%  
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                 ) %>%
+  # filter(!is.na(Percent_Headway)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                 ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+  group_by(LogonID, UserReportLabel, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  pivot_wider(names_from = Headway_Status, values_from = c(Percent, n)) %>%
+  select("Bunched" = "Percent_Bunched", 
+         "Expected" = "Percent_Expected", 
+         "Gapped" = "Percent_Gapped",
+         everything()) %>%
+  ungroup() %>%
+  top_n(., -10, wt = Expected) %>% 
+  arrange(Expected) %>%
+  mutate_at(., c("Bunched", "Expected", "Gapped"), ~scales::percent(., accuracy = 1))  %>%
+  rowwise() %>%
+  mutate("Total Headways" = sum(n_Bunched, n_Expected, n_Gapped, na.rm = T)) %>%
+  select("Operator" = UserReportLabel, LogonID, everything(), -starts_with("n_")) 
+
+```
+
+```{r transform headway adherence data pt 4, results='asis'}
+
+# Lowest Performing Blocks, BRT
+
+Lowest_Block_BRT_HA <- FactHeadwayAdherence %>% 
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey")) %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimBlock, by = "BlockKey") %>%
+    filter(DateKey == DimDate_yesterday$DateKey) %>%  
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                 ) %>%
+  # filter(!is.na(Percent_Headway)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                 ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+  group_by(BlockFareboxID, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  pivot_wider(names_from = Headway_Status, values_from = c(Percent, n)) %>%
+  select("Bunched" = "Percent_Bunched", 
+         "Expected" = "Percent_Expected", 
+         "Gapped" = "Percent_Gapped",
+         everything()) %>%
+  ungroup() %>%
+  top_n(., -10, wt = Expected) %>% 
+  arrange(Expected) %>%
+  mutate_at(., c("Bunched", "Expected", "Gapped"), ~scales::percent(., accuracy = 1))  %>%
+  rowwise() %>%
+  mutate("Total Headways" = sum(n_Bunched, n_Expected, n_Gapped, na.rm = T)) %>%
+  select("Block" = BlockFareboxID, everything(), -starts_with("n_")) 
+```
+
+```{r transform headway adherence data pt 5, results='asis'}
+
+# Highest Performing Blocks, BRT
+
+Highest_Block_BRT_HA <- FactHeadwayAdherence %>% 
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey")) %>%
+  left_join(DimUser, by = "UserKey") %>%
+  left_join(DimBlock, by = "BlockKey") %>%
+    filter(DateKey == DimDate_yesterday$DateKey) %>%  
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                 ) %>%
+  # filter(!is.na(Percent_Headway)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                 ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+  group_by(BlockFareboxID, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  pivot_wider(names_from = Headway_Status, values_from = c(Percent, n)) %>%
+  select("Bunched" = "Percent_Bunched", 
+         "Expected" = "Percent_Expected", 
+         "Gapped" = "Percent_Gapped",
+         everything()) %>%
+  ungroup() %>%
+  top_n(., 10, wt = Expected) %>% 
+  arrange(desc(Expected)) %>%
+  mutate_at(., c("Bunched", "Expected", "Gapped"), ~scales::percent(., accuracy = 1))  %>%
+  rowwise() %>%
+  mutate("Total Headways" = sum(n_Bunched, n_Expected, n_Gapped, na.rm = T)) %>%
+  select("Block" = BlockFareboxID, everything(), -starts_with("n_")) 
+```
+
+```{r transform headway adherence data pt 6, results='asis'}
+
+# Highest Performing Operators, BRT
+
+Highest_Op_BRT_HA <- FactHeadwayAdherence %>% 
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey")) %>%
+  left_join(DimUser, by = "UserKey") %>%
+    filter(DateKey == DimDate_yesterday$DateKey) %>%  
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                 ) %>%
+  # filter(!is.na(Percent_Headway)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                 ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+  group_by(LogonID, UserReportLabel, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  pivot_wider(names_from = Headway_Status, values_from = c(Percent, n)) %>%
+  select("Bunched" = "Percent_Bunched", 
+         "Expected" = "Percent_Expected", 
+         "Gapped" = "Percent_Gapped",
+         everything()) %>%
+  ungroup() %>%
+  top_n(., 10, wt = Expected) %>% 
+  arrange(desc(Expected)) %>%
+  mutate_at(., c("Bunched", "Expected", "Gapped"), ~scales::percent(., accuracy = 1))  %>%
+  rowwise() %>%
+  mutate("Total Headways" = sum(n_Bunched, n_Expected, n_Gapped, na.rm = T)) %>%
+  select("Operator" = UserReportLabel, LogonID, everything(), -starts_with("n_")) 
+```
+
+```{r transform headway adherence data pt 7, results='asis'}
+
+# Month to Date BRT OTP
+
+BRT_HA_since_september_MTD <- rbind(FactHeadwayAdherence %>%
+                                   left_join(DimPattern, by = "PatternKey") %>%
+                                   filter(DeadheadInd == 0) %>%
+                                   filter(!is.na(DepartIntervalTimeActualSecs)) %>%
+                                   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                                   left_join(DimStop, by = "StopKey") %>%
+                                   filter(StopReportLabel %in% true_90_stops$StopReportLabel,
+                                          StopReportLabel != "UniverofIndplsS",
+                                          StopReportLabel != "College&66thNB") %>% # not exactly right, but OK approximation
+                                   left_join(select(DimDate_since_september, DateKey, 
+                                                    MonthYearShortName, MonthYearSort), 
+                                             by = "DateKey") %>% # note this
+                                   filter(DateKey < 7958) %>% # note this
+                                   mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                                                  ) %>%
+                                   mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                                                  ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+                                   left_join(DimRoute, by = "RouteKey"), # this is rbind break
+                                FactHeadwayAdherence %>%
+                                   left_join(DimPattern, by = "PatternKey") %>%
+                                   filter(DeadheadInd == 0) %>%
+                                   filter(!is.na(DepartIntervalTimeActualSecs)) %>%
+                                   filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                                   left_join(DimStop, by = "StopKey") %>%
+                                   left_join(select(DimDate_since_september, DateKey, 
+                                                    MonthYearShortName, MonthYearSort), 
+                                             by = "DateKey") %>% # note this
+                                   filter(DateKey >= 7958 ) %>% # note this
+                                   mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                                                  ) %>%
+                                   mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                                                  ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+                                   left_join(DimRoute, by = "RouteKey")) %>% # end rbind
+  group_by(MonthYearShortName, MonthYearSort, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  # select(everything(), -n) %>%
+  pivot_wider(names_from = Headway_Status, values_from = c(Percent, n)) %>%
+  arrange(MonthYearSort) %>%
+  select("Bunched" = "Percent_Bunched", 
+         "Expected" = "Percent_Expected", 
+         "Gapped" = "Percent_Gapped",
+         everything()) %>%
+  mutate_at(., c("Bunched", "Expected", "Gapped"), ~scales::percent(., accuracy = 1)) %>%
+  rowwise() %>%
+  mutate("Total Headways" = sum(n_Bunched, n_Expected, n_Gapped, na.rm = T)) %>%
+  select(-starts_with("n_")) %>%
+  ungroup() %>%
+  select("Month - Year" = MonthYearShortName, everything(), -MonthYearSort)
+```
+
+```{r transform headway adherence data pt 8, results='asis'}
+
+# Year to Date BRT OTP
+
+BRT_HA_since_september_YTD <- rbind(FactHeadwayAdherence %>% # still needs work
+                                  left_join(DimPattern, by = "PatternKey") %>%
+                                  filter(DeadheadInd == 0) %>%
+                                  filter(!is.na(DepartIntervalTimeActualSecs)) %>%
+                                  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                                  left_join(DimStop, by = "StopKey") %>%
+                                  filter(StopReportLabel %in% true_90_stops$StopReportLabel,
+                                          StopReportLabel != "UniverofIndplsS",
+                                          StopReportLabel != "College&66thNB") %>% # not exactly right, but OK approximation # slightly different than how I've done it in the past...
+                                  left_join(select(DimDate_since_september, DateKey, 
+                                                   MonthYearShortName, MonthYearSort), 
+                                            by = "DateKey") %>% # note this
+                                  filter(DateKey < 7958) %>% # note this
+                                  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)
+                                                                 ) %>%
+                                  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                                                 ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+                                  left_join(DimRoute, by = "RouteKey"), # this is rbind break
+                                FactHeadwayAdherence %>%
+                                  left_join(DimPattern, by = "PatternKey") %>%
+                                  filter(DeadheadInd == 0) %>%
+                                  filter(!is.na(DepartIntervalTimeActualSecs)) %>%
+                                  filter(RouteKey %in% DimRoute_90$RouteKey) %>%
+                                  left_join(DimStop, by = "StopKey") %>%
+                                  left_join(select(DimDate_since_september, DateKey, 
+                                                   MonthYearShortName, MonthYearSort), 
+                                            by = "DateKey") %>% # note this
+                                  filter(DateKey >= 7958 ) %>% # note this
+                                  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)) %>%
+                                  mutate(Headway_Status = ifelse(Percent_Headway < 0.8, "Bunched", 
+                                                                  ifelse(Percent_Headway > 1.2, "Gapped", "Expected"))) %>%
+                                  left_join(DimRoute, by = "RouteKey")) %>% # end rbind
+  filter(DateKey >= 7939, DateKey <= DimDate_last_month_last_day) %>%
+  group_by(MonthYearSort, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  pivot_wider(names_from = Headway_Status, values_from = n) %>%
+  # mutate(sum_n = sum(n)) %>%
+  arrange(MonthYearSort) %>%
+  group_by(MonthYearSort) %>%
+  arrange(MonthYearSort) %>%
+  summarise(Bunched = sum(Bunched),
+         Expected = sum(Expected),
+         Gapped = sum(Gapped)) %>%
+  mutate(YTD_b = cumsum(Bunched),
+         YTD_e = cumsum(Expected),
+         YTD_g = cumsum(Gapped)) %>% 
+  mutate(YTD_b_p = YTD_b / (YTD_b + YTD_e + YTD_g),
+         YTD_e_p = YTD_e / (YTD_b + YTD_e + YTD_g),
+         YTD_g_p = YTD_g / (YTD_b + YTD_e + YTD_g),
+         YTD_T_HW = YTD_b + YTD_e + YTD_g) %>%
+  mutate_at(., c("YTD_b_p", "YTD_e_p", "YTD_g_p"), ~scales::percent(., accuracy = 1)) %>%
+  ungroup() %>%
+  arrange(MonthYearSort) %>%
+  left_join(distinct(select(DimDate_since_september, 
+                            MonthYearShortName, MonthYearSort)), by = "MonthYearSort") %>% 
+  select("Month - Year" = MonthYearShortName, 
+         "YTD Bunched %" = YTD_b_p, 
+         "YTD Expected %" = YTD_e_p, 
+         "YTD Gapped %" = YTD_g_p,
+         "YTD Total Headways" = YTD_T_HW)
+```
+
+### BRT OTP
+```{r BRT OTP, results='asis' }
+
+
+BRT_OTP_corp %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+
+  
+```
+
+### Local OTP
+
+```{r Local OTP, results='asis' }
+
+
+Avail_FR %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+  
+```
+
+
+### Highest OTP, Local Routes
+
+```{r Best performing local routes, results='asis' }
+
+
+Best_Routes %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+  
+```
+
+
+### Lowest OTP, Local Routes
+
+```{r Worst performing local routes, results='asis' }
+
+
+Worst_Routes %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+  
+```
+
+
+### Lowest Operator OTP, Local Routes
+
+```{r worst FR operators, results='asis' }
+Worst_Operators_FR %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+
+### Lowest Block OTP, Local Routes
+
+```{r worst local blocks, results='asis' }
+Worst_blocks_local %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+
+### Earliest Departures
+
+```{r earliest depatures, results='asis' }
+Earliest_Departures_FR %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+
+### Lowest Operator OTP, BRT
+
+```{r worst BRT operators, results='asis' }
+Worst_Operators_BRT %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Lowest Block OTP, BRT
+
+```{r worst BRT blocks, results='asis' }
+Worst_blocks_BRT %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Highest Block OTP, BRT
+
+```{r best BRT blocks, results='asis' }
+Best_blocks_BRT %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Highest Operator OTP, BRT
+
+```{r best BRT operators, results='asis' }
+Best_Operators_BRT %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Worst Hours BRT OTP
+```{r Worst Hours BRT, results='asis' }
+
+
+BRT_OTP_worst_hour %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+
+  
+```
+
+## Headway Adherence
+
+Headway adherence is a measure of time between vehicle departures from stops. Actual departure intervals are compared to scheduled depature intervals to assess headway adherence. The Red Line, for example, has scheduled headways of ten minutes during peak hours.
+
+Instead of "early," "late," or "on-time," headways are classified as *bunched*, *gapped*, or *expected*.
+
+Headways are "*bunched*" when the time between departures is less than 80-percent of scheduled headways. 
+
+Headways are "*gapped*" when the time between departures is greater than 120-percent of scheduled headways. 
+
+Headways are "*expected*" when departures occur within 80- to 120-percent of scheduled headways.
+
+Thus with the Red Line during peak hours, a vehicle departing less than 8 minutes after the last vehicle would be considered bunched, whereas a vehicle departing 12 minutes after the last vehilce would be considered gapped.
+
+The number of headways is determined by the number of intervals between departing vehicles at stations. Thus the first vehicle each day will have no headways, because there would have been no prior departing vehicle.
+
+Although all routes have scheduled headways, this report only covers service on the Red Line.
+
+### BRT Headway Adherence
+```{r BRT Headway Adherence, results='asis' }
+
+
+BRT_HA %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+
+  
+```
+
+### Worst Hours BRT Headway Adherence
+```{r Worst Hours BRT Headway Adherence, results='asis' }
+
+
+Worst_Hour_HA %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+
+  
+```
+### Highest Operators Headway Adherence, BRT
+
+```{r best BRT-HA operators, results='asis' }
+Highest_Op_BRT_HA %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+### Lowest Operator Headway Adherence, BRT
+
+```{r worst BRT-Headway Adherence operators, results='asis' }
+Lowest_Op_BRT_HA %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+### Highest Block Headway Adherence, BRT
+
+```{r best BRT-HA blocks, results='asis' }
+Highest_Block_BRT_HA %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+### Lowest Block Headway Adherence, BRT
+
+```{r worst BRT-HA blocks, results='asis' }
+Lowest_Block_BRT_HA%>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+## Historical
+
+These figures include month-to-date and year-to-date values for both OTP and Headway Adherence.
+
+### Monthly BRT OTP
+
+```{r MTD BRT OTP, results='asis' }
+BRT_OTP_since_september %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Monthly Local OTP
+
+```{r MTD FR OTP, results='asis' }
+Avail_FR_since_september %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Monthly Fixed-Route OTP (Local + BRT)
+
+```{r MTD FR + BRT OTP, results='asis' }
+BRT_FR_OTP_since_september %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Year to Date BRT OTP
+
+```{r YTD BRT OTP, results='asis' }
+YTD_BRT_up_to_this_month %>%
+   left_join(distinct(select(DimDate_since_september, 
+                      MonthYearShortName, MonthYearSort)), by = "MonthYearSort") %>% 
+  select("Month - Year" = MonthYearShortName, "YTD OTP", "YTD Early %", "YTD Late %","YTD On-time Departures", "YTD Total Departures") %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Year to Date Local OTP
+
+```{r YTD FR OTP, results='asis' }
+YTD_FR_up_to_this_month %>%
+   left_join(distinct(select(DimDate_since_september, 
+                      MonthYearShortName, MonthYearSort)), by = "MonthYearSort") %>% 
+  select("Month - Year" = MonthYearShortName, "YTD OTP", "YTD Early %", "YTD Late %", "YTD On-time Departures","YTD Total Departures") %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Year to Date Fixed-Route OTP (Local + BRT)
+
+```{r YTD FR + BRT OTP, results='asis' }
+YTD_BRT_FR_up_to_this_month %>%
+   left_join(distinct(select(DimDate_since_september, 
+                      MonthYearShortName, MonthYearSort)), by = "MonthYearSort") %>% 
+  select("Month - Year" = MonthYearShortName, "YTD OTP", "YTD Early %", "YTD Late %","YTD On-time Departures", "YTD Total Departures") %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Monthly BRT Headway Adherence
+
+```{r MTD BRT HA, results='asis' }
+BRT_HA_since_september_MTD %>% 
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+
+### Year to Date BRT Headway Adherence
+
+```{r YTD BRT HA, results='asis' }
+BRT_HA_since_september_YTD %>%
+kable(., format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),  full_width = F)
+```
+## Other tables
+
+All Operator OTP for `r last_month_name`:
+<button class="btn btn-primary" data-toggle="collapse" data-target="#all_operators_last_month"> Show/Hide </button>  
+<div id="all_operators_last_month" class="collapse">  
+```{r all operator OTP, echo=FALSE}
+all_operators_last_month %>%
+DT::datatable(.,extensions = 'Buttons', options = list(
+    dom = 'lfrtipB',
+    buttons = 
+      list('copy', 'print', list(
+        extend = 'collection',
+        buttons = c('csv', 'excel', 'pdf'),
+        text = 'Download'
+      ))
+    
+  ), rownames = FALSE)
+```
+</div><br>
+
+Operators with at least 675 departures and 90 % OTP in `r last_month_name`:
+<button class="btn btn-primary" data-toggle="collapse" data-target="#90_percent_operators_last_month"> Show/Hide </button>  
+<div id="90_percent_operators_last_month" class="collapse">  
+```{r 90 percent club OTP, echo=FALSE}
+ninety_percent_club_last_month %>%
+DT::datatable(.,
+              extensions = 'Buttons', options = list(
+    dom = 'lfrtipB',
+    buttons = 
+      list('copy', 'print', list(
+        extend = 'collection',
+        buttons = c('csv', 'excel', 'pdf'),
+        text = 'Download'
+      ))
+    
+  ), rownames = FALSE)
+```
+</div><br>
+
+All early departures on `r yesterday_full_date`:
+<button class="btn btn-primary" data-toggle="collapse" data-target="#early_departures"> Show/Hide </button>  
+<div id="early_departures" class="collapse">  
+```{r early departures, echo=FALSE}
+early_departures %>%
+DT::datatable(.,
+              extensions = 'Buttons', options = list(
+    dom = 'lfrtipB',
+    buttons = 
+      list('copy', 'print', list(
+        extend = 'collection',
+        buttons = c('csv', 'excel', 'pdf'),
+        text = 'Download'
+      ))
+    
+  ), rownames = FALSE)
+```
+</div><br>
+
+BRT Headway Adherence by Hour of Day, `r yesterday_full_date`:
+<button class="btn btn-primary" data-toggle="collapse" data-target="#BRT_Hour_HA"> Show/Hide </button>  
+<div id="BRT_Hour_HA" class="collapse">  
+```{r BRT HA hour of day, echo=FALSE}
+FactHeadwayAdherence %>% # need to add direction to the mix...
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey")) %>%
+  filter(DateKey == DimDate_yesterday$DateKey) %>% 
+  mutate(Depart_Actual_Hour = sub("^0", "", format(strptime(substring(DepartTimeActual, 12, 13),
+                                                            format = '%H'), '%I %p'))) %>% 
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.80, "Bunched", 
+                                 ifelse(Percent_Headway > 1.20, "Gapped", "Expected"))) %>%
+  group_by(Time24Hour, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  select(everything(), -n) %>%
+  ggplot(aes(x = factor(Time24Hour, levels = c(5:24,0)), y = Percent, fill = Headway_Status))+
+  geom_bar(stat = "identity", position = "stack")+ 
+  scale_y_continuous(labels = scales::percent)+
+  labs(x = "Hour of Day", y ="", title = "Headway Status by Hour of Day",
+       fill = "Headway Status") +
+  scale_fill_manual(values = wesanderson::wes_palette(3, name = "Zissou1"))
+```
+</div><br>
+
+BRT Headway Adherence by Station and Direction, `r yesterday_full_date`:
+<button class="btn btn-primary" data-toggle="collapse" data-target="#BRT_HA_station_and_direction"> Show/Hide </button>  
+<div id="BRT_HA_station_and_direction" class="collapse">  
+```{r BRT HA station and direction, echo=FALSE}
+FactHeadwayAdherence %>% # need to add direction to the mix...
+  left_join(DimRoute, by = "RouteKey") %>%
+  left_join(DimStop, by = "StopKey")%>%
+  left_join(DimDate_yesterday, by = "DateKey") %>%
+  left_join(DimPattern, by = "PatternKey") %>%
+  left_join(DimVehicle, by = "VehicleKey") %>%
+  left_join(DimTime, by = c("DepartTimeKey" = "TimeKey")) %>%
+  filter(DateKey == DimDate_yesterday$DateKey) %>% 
+  mutate(Depart_Actual_Hour = sub("^0", "", format(strptime(substring(DepartTimeActual, 12, 13),
+                                                            format = '%H'), '%I %p'))) %>% 
+  arrange(StopKey, DepartTimeSchedule) %>%
+  mutate(Percent_Headway = (DepartIntervalTimeActualSecs / ScheduledDepartIntervalTimeSecs)) %>%
+  # filter(!is.na(Percent_Headway)) %>%
+  mutate(Headway_Status = ifelse(Percent_Headway < 0.80, "Bunched", 
+                                 ifelse(Percent_Headway > 1.20, "Gapped", "Expected"))) %>%
+  group_by(PatternDirectionDesc, StopDesc, Latitude, Headway_Status) %>%
+  summarise(n = n()) %>%
+  filter(!is.na(Headway_Status)) %>%
+  mutate(Percent = n / sum(n)) %>%
+  select(everything(), -n) %>%
+  # pivot_wider(names_from = Headway_Status, values_from = Percent) %>%
+  ggplot(aes(x =  reorder(StopDesc, Latitude), y = Percent, fill = Headway_Status))+
+  geom_bar(stat = "identity", position = "stack")+ 
+  scale_y_continuous(labels = scales::percent,
+                     breaks=c(0, .5, 1))+
+  labs(x = "", y ="", title = "Headway Status by Station and Direction")+
+  coord_flip()+
+  facet_wrap(~PatternDirectionDesc, scales = "free")+
+  scale_fill_manual(values = wesanderson::wes_palette(3, name = "Zissou1"))
+```
+</div><br>
+
+Last week Supervisor OTP:
+<button class="btn btn-primary" data-toggle="collapse" data-target="#last_week_supervisor_OTP"> Show/Hide </button>  
+<div id="last_week_supervisor_OTP" class="collapse">  
+```{r last week supervisor OTP, echo=FALSE}
+last_week_supervisor_OTP %>%
+DT::datatable(.,
+              extensions = 'Buttons', options = list(
+    dom = 'lfrtipB',
+    buttons = 
+      list('copy', 'print', list(
+        extend = 'collection',
+        buttons = c('csv', 'excel', 'pdf'),
+        text = 'Download'
+      ))
+    
+  ), rownames = FALSE)
+```
+</div><br>
+
+Last week Operator OTP:
+<button class="btn btn-primary" data-toggle="collapse" data-target="#last_week_operator_OTP"> Show/Hide </button>  
+<div id="last_week_operator_OTP" class="collapse">  
+```{r last week operator OTP, echo=FALSE}
+last_week_operator_OTP %>%
+DT::datatable(.,
+              extensions = 'Buttons', options = list(
+    dom = 'lfrtipB',
+    buttons = 
+      list('copy', 'print', list(
+        extend = 'collection',
+        buttons = c('csv', 'excel', 'pdf'),
+        text = 'Download'
+      ))
+    
+  ), rownames = FALSE)
+```
+</div><br>
+
+If you believe this report is in error, please contact Samuel Carter (scarter@indygo.net) or Mike Nugent (michael.nugent@indygo.net). Report last revised 2020-08-21.
