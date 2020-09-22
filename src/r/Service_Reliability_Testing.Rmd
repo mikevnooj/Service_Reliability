@@ -1,8 +1,8 @@
 ---
 title: "Daily Service Reliability Report"
 author: "Samuel B. Carter"
-date: '`r gsub(" 0", " ", format(as.Date("2020-08-21"), "%B %d, %Y"))`' # crtl+f and change all dates for past reports. Be sure to change second yesterday_Avail variable.
-knit: (function(inputFile, encoding) { rmarkdown::render(inputFile, encoding = encoding, output_file = paste0(format(as.Date("2020-08-21"), "%Y%m%d"), " Service Reliability Testing",'.html'));rmarkdown::render(inputFile, encoding = encoding, output_file = paste0(format(as.Date("2020-08-21"), "%Y%m%d"), " Service Reliability Testing",'.html'),output_dir = "//iptc-prtsvr1/shared/Transportation Management/Service Reliability Reports")})
+date: '`r gsub(" 0", " ", format(as.Date("2020-09-18"), "%B %d, %Y"))`' # crtl+f and change all dates for past reports. Be sure to change second yesterday_Avail variable.
+knit: (function(inputFile, encoding) { rmarkdown::render(inputFile, encoding = encoding, output_file = paste0(format(as.Date("2020-09-18"), "%Y%m%d"), " Service Reliability Testing",'.html'));rmarkdown::render(inputFile, encoding = encoding, output_file = paste0(format(as.Date("2020-09-18"), "%Y%m%d"), " Service Reliability Testing",'.html'),output_dir = "//iptc-prtsvr1/shared/Transportation Management/Service Reliability Reports")})
 output:
   html_document:
     df_print: paged
@@ -31,23 +31,23 @@ yesterday_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "day") # this is 
 # current_month_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "month")
 since_september_Avail <- "2019-09-01"
 
-last_month_end_Avail <- lubridate::floor_date(Sys.Date(), unit = "month") - 1
-
-last_month_start_Avail <- lubridate::rollback(last_month_end_Avail, roll_to_first = TRUE, preserve_hms = FALSE)
-
-report_start_time <- Sys.time()
-
-yesterday_full_date <- gsub(" 0", " ", format(yesterday_Avail, "%B %d, %Y" ))
-
-last_month_name <- format(last_month_start_Avail, "%B" )
-
-last_week_start_Avail <- lubridate::floor_date(Sys.Date() -7, unit = "week")
-
-last_week_end_Avail <- lubridate::ceiling_date(Sys.Date() - 7, unit = "week") - 1
+# last_month_end_Avail <- lubridate::floor_date(Sys.Date(), unit = "month") - 1
+# 
+# last_month_start_Avail <- lubridate::rollback(last_month_end_Avail, roll_to_first = TRUE, preserve_hms = FALSE)
+# 
+# report_start_time <- Sys.time()
+# 
+# yesterday_full_date <- gsub(" 0", " ", format(yesterday_Avail, "%B %d, %Y" ))
+# 
+# last_month_name <- format(last_month_start_Avail, "%B" )
+# 
+# last_week_start_Avail <- lubridate::floor_date(Sys.Date() -7, unit = "week")
+# 
+# last_week_end_Avail <- lubridate::ceiling_date(Sys.Date() - 7, unit = "week") - 1
 
 # # date switches -- turn this on to search for past date
 # 
-yesterday_Avail <- as.Date("2020-08-15") - 1 # switch this for past date.
+yesterday_Avail <- as.Date("2020-09-18") - 1 # switch this for past date.
 
 last_month_end_Avail <- lubridate::floor_date(yesterday_Avail, unit = "month") - 1
 
@@ -2566,4 +2566,4 @@ DT::datatable(.,
 ```
 </div><br>
 
-If you believe this report is in error, please contact Samuel Carter (scarter@indygo.net) or Mike Nugent (michael.nugent@indygo.net). Report last revised 2020-08-21.
+If you believe this report is in error, please contact Samuel Carter (scarter@indygo.net) or Mike Nugent (michael.nugent@indygo.net). Report last revised 2020-09-18.

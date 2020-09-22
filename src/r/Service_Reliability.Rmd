@@ -34,7 +34,7 @@ library(lubridate)
 
 yesterday_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "day")
 
-# current_month_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "month")
+current_month_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "month")
 since_september_Avail <- "2019-09-01"
 
 last_month_end_Avail <- lubridate::floor_date(Sys.Date(), unit = "month") - 1
@@ -53,7 +53,7 @@ last_week_end_Avail <- lubridate::ceiling_date(Sys.Date() - 7, unit = "week") - 
 
 # # # date switches -- turn this on to search for past date
 # # 
-# yesterday_Avail <- as.Date("2020-08-15") - 1 # switch this for past date.
+# yesterday_Avail <- as.Date("2020-09-20") - 1 # switch this for past date.
 # 
 # last_month_end_Avail <- lubridate::floor_date(yesterday_Avail, unit = "month") - 1
 # 
@@ -79,6 +79,8 @@ On-time performance is calculated as the number of on-time depatures divided by 
 ```{r include = FALSE}
 knitr::opts_chunk$set(echo=FALSE)
 knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+options(dplyr.summarise.inform = FALSE)
 ```
 
 ```{r revision history}
