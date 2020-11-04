@@ -2,7 +2,7 @@
 title: "Daily Service Reliability Report"
 author: "Mike Nugent, Jr."
 date: '`r gsub(" 0", " ", format(Sys.Date(), "%B %d, %Y"))`' 
-knit: (function(inputFile, encoding){rmarkdown::render(inputFile,encoding = encoding,output_file = paste0(format(Sys.Date(), "%Y%m%d"), " Service Reliability Report", '.html'))
+knit: (function(inputFile, encoding)  {rmarkdown::render(inputFile,encoding = encoding,output_file = paste0(format(Sys.Date(), "%Y%m%d"), " Service Reliability Report", '.html'))})
 # );rmarkdown::render(inputFile,encoding = encoding,output_file = paste0(format(Sys.Date(), "%Y%m%d"), " # Service Reliability Report", '.html'))})
 
 #paste this back in later
