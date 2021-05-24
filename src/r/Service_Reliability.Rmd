@@ -35,6 +35,7 @@ library(lubridate)
 yesterday_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "day")
 
 current_month_Avail <- lubridate::floor_date(Sys.Date() -1, unit = "month")
+
 since_september_Avail <- "2019-09-01"
 
 last_month_end_Avail <- lubridate::floor_date(Sys.Date(), unit = "month") - 1
@@ -1655,10 +1656,16 @@ early_departures <- FactTimepointAdherence_raw %>%
 
 ```{r get, clean, and transform supervisor data}
 
-con <- DBI::dbConnect(odbc::odbc(), Driver = "SQL Server", Server = "IPTC-TMDATAMART\\TMDATAMART", 
-                      Database = "TMDATAMART", Port = 1433)
-  
-Hastus_Drivers_TMDM <- tbl(con, "Hastus_Drivers") %>% collect()
+con <- DBI::dbConnect(odbc::odbc()
+                      , Driver = "SQL Server"
+                      , Server = "REPSQLP01VW"
+                      , Database = "StrategicPlanningSandbox"
+                      , Port = 1433
+                      )
+
+Hastus_Drivers_TMDM <- tbl(con
+                           , "Hastus_Drivers"
+                           ) %>% collect()
 
 # Also clean up some values
 

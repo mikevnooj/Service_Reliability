@@ -3,13 +3,13 @@
 
 Sys.setenv(RSTUDIO_PANDOC="C:/Program Files/RStudio/bin/pandoc")
 
-rmarkdown::render(input = "C:/Users/Michael.Nugent/Documents/Projects/R_Projects/nooj/Reporting/Daily/Service_Reliability/src/r/Service_Reliability.Rmd"
+rmarkdown::render(input = "C:/Users/Michael.Nugent/OneDrive - IndyGo/Documents/Projects/R_Projects/nooj/Reporting/Daily/Service_Reliability/src/r/Service_Reliability.Rmd"
                   ,output_file = paste0(format(Sys.Date(), "%Y%m%d"), " Service Reliability Report",'.html')
-                  ,output_dir = "C:/Users/Michael.Nugent/Documents/Projects/R_Projects/nooj/Reporting/Daily/Service_Reliability/output/html") 
+                  ,output_dir = "C:/Users/Michael.Nugent/OneDrive - IndyGo/Documents/Projects/R_Projects/nooj/Reporting/Daily/Service_Reliability/output/html") 
 
 file.copy(
   from = paste0(
-    "C:/Users/Michael.Nugent/Documents/Projects/R_Projects/nooj/Reporting/Daily/Service_Reliability/output/html/"
+    "C:/Users/Michael.Nugent/OneDrive - IndyGo/Documents/Projects/R_Projects/nooj/Reporting/Daily/Service_Reliability/output/html/"
     ,paste0(
       format(Sys.Date(), "%Y%m%d")
       , " Service Reliability Report",'.html'
