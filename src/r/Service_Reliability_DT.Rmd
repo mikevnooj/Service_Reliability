@@ -33,25 +33,43 @@ knitr::opts_chunk$set(echo = TRUE,message = F)
 ```{r define date variables, include = FALSE}
 
 #dynamic date vars
-yesterday_avail <- lubridate::floor_date(Sys.Date() - 1,unit = "day")
+yesterday <- lubridate::floor_date(Sys.Date() - 1
+                                         , unit = "day"
+                                         )
 
 #current_month_avail <- floor_date(Sys.Date() - 1,unit= "month")
 
-since_september_avail <- "2019-09-01"
+since_september <- "2019-09-01"
 
-last_month_end_avail <- lubridate::floor_date(Sys.Date(), unit = "month") - 1
+last_month_end <- lubridate::floor_date(Sys.Date()
+                                        , unit = "month"
+                                        ) - 1
 
-last_month_start_avail <- lubridate::rollback(last_month_end_avail, roll_to_first = TRUE, preserve_hms = FALSE)
+last_month_start <- lubridate::rollback(last_month_end
+                                        , roll_to_first = TRUE
+                                        , preserve_hms = FALSE
+                                        )
 
 report_start_time <- Sys.time()
 
-yesterday_full_date <- gsub(" 0", " ", format(yesterday_avail, "%B %d, %Y" ))
+yesterday_full_date <- gsub(" 0"
+                            , " "
+                            , format(yesterday
+                                     , "%B %d, %Y" 
+                                     )
+                            )
 
-last_month_name <- format(last_month_start_Avail, "%B" )
+last_month_name <- format(last_month_start
+                          , "%B"
+                          )
 
-last_week_start_Avail <- lubridate::floor_date(Sys.Date() -7, unit = "week")
+last_week_start <- lubridate::floor_date(Sys.Date() - 7
+                                         , unit = "week"
+                                         )
 
-last_week_end_Avail <- lubridate::ceiling_date(Sys.Date() - 7, unit = "week") - 1
+last_week_end <- lubridate::ceiling_date(Sys.Date() - 7
+                                         , unit = "week"
+                                         ) - 1
 
 
 ```
@@ -85,139 +103,179 @@ con2 <- DBI::dbConnect(odbc::odbc()
 
   
 # get calendar key
+DimDate_since_september <- tbl(con2
+                               , "DimDate"
+                               ) %>%
+  dplyr::filter(CalendarDate >= since_september
+         , CalendarDate <= yesterday
+         ) %>%
+  dplyr::collect() %>%
+  data.table(key = "DateKey")
 
-DimDate_yesterday <- tbl(con2
-                         , "DimDate"
-                         ) %>%
-  filter(CalendarDate == yesterday_avail) %>%
-  collect() %>%
-  data.table()
+DimDate_yesterday <- DimDate_since_september[as.IDate(CalendarDate) == as.IDate(yesterday)]
 
 # get month to date calendar key
 
-DimDate_last_month <- tbl(con2
-                          , "DimDate"
-                          ) %>%
-  filter(CalendarDate >= last_month_start_Avail
-         , CalendarDate <= last_month_end_Avail
-         ) %>%
-  collect() %>%
-  data.table()
-
+DimDate_last_month <- DimDate_since_september[CalendarDate >= last_month_start &
+                                                CalendarDate <= last_month_end
+                                              ]
+  
 DimDate_last_month_last_day <- max(DimDate_last_month$DateKey)
 
 DimDate_last_month_first_day <- min(DimDate_last_month$DateKey)
 
-# get dates since september
-
-DimDate_since_september <- tbl(con2
-                               , "DimDate"
-                               ) %>%
-  filter(CalendarDate >= since_september_Avail
-         , CalendarDate <= yesterday_Avail
-         ) %>%
-  collect() %>%
-  data.table()
-  
-
 # get last week calendar key
 
-DimDate_last_week <- tbl(con2
-                         , "DimDate"
-                         ) %>%
-  filter(between(CalendarDate
-                 , last_week_start_Avail
-                 , last_week_end_Avail
-                 )
-         ) %>%
-  collect()
-
+DimDate_last_week <- DimDate_since_september[CalendarDate >= last_week_start &
+                                               CalendarDate <= last_week_end]
+  
+  
 # get DimPattern
 
-DimPattern <- tbl(con2
-                  , "DimPattern"
-                  ) %>% collect()
+DimPattern <- dplyr::tbl(con2
+                         , "DimPattern"
+                         ) %>% 
+  dplyr::collect() %>%
+  data.table(key = "PatternKey")
 
 # get routes
 
-DimRoute <- tbl(con2, "DimRoute") %>% collect()
+DimRoute <- dplyr::tbl(con2, "DimRoute") %>% 
+  dplyr::collect() %>%
+  data.table(key = "RouteKey")
 
 # get vehicles
 
-DimVehicle <- tbl(con2, "DimVehicle") %>% collect()
+DimVehicle <- dplyr::tbl(con2, "DimVehicle") %>% 
+  dplyr::collect() %>%
+  data.table(key = "VehicleKey")
 
 # get route 90 BRT
 
-DimRoute_90 <- tbl(con2, "DimRoute") %>% 
-  filter(RouteDesc == "Red Line") %>%
-  collect()
-
+DimRoute_90 <- DimRoute[RouteDesc == "Red Line"]
+  
 # get stops
 
-DimStop <- tbl(con2, "DimStop") %>%
-  collect()
+DimStop <- dplyr::tbl(con2, "DimStop") %>%
+  dplyr::collect() %>%
+  data.table(key = "StopKey")
+
 
 # get time (for hour of day OTP)
 
-DimTime <- tbl(con2, "DimTime") %>% collect()
+DimTime <- dplyr::tbl(con2, "DimTime") %>% 
+  dplyr::collect() %>%
+  data.table(key = "TimeKey")
 
 # get operators 
 
-DimUser <- tbl(con2, "DimUser") %>%
-  collect()
+DimUser <- dplyr::tbl(con2, "DimUser") %>%
+  dplyr::collect() %>%
+  data.table(key = "UserKey")
 
 # get blocks 
 
-DimBlock <- tbl(con2, "DimBlock") %>%
-  collect()
+DimBlock <- dplyr::tbl(con2, "DimBlock") %>%
+  dplyr::collect() %>% 
+  data.table(key = "BlockKey")
 
 # get trips, for direction
 
-DimTrip <- tbl(con2, "DimTrip") %>%
-  select(TripKey, DirectionDesc) %>%
-  collect()
+DimTrip <- dplyr::tbl(con2, "DimTrip") %>%
+  dplyr::select(TripKey, DirectionDesc) %>%
+  dplyr::collect() %>% 
+  data.table(key = "TripKey")
 
-# get Avail adherence for yesteday
-
-FactTimepointAdherence_raw <- tbl(con2
-                                  , "FactTimepointAdherence"
-                                  ) %>%   
-  select(-CoordinateList
-         , -TimepointGeom
-         , everything()
-         )%>% #  CoordinateList and TimepointGeom break collection
-  filter(DateKey == !!DimDate_yesterday$DateKey
-         , !is.na(DepartTimeVarianceSecs)
-         ) %>%
-  collect()
-
-# # get Avail adherence for whole month
-# 
-# FactTimepointAdherence_month <- tbl(con2, "FactTimepointAdherence") %>% 
-#   select(everything(),-CoordinateList,-TimepointGeom) %>% 
-#   filter(DateKey %in% local(DimDate_current_month$DateKey)) %>%
-#   collect()
 
 # get data since september, and then join it
 
-FactTimepointAdherence_since_september <- tbl(con2, "FactTimepointAdherence") %>% 
-  select(DateKey, PatternKey, RouteKey, UserKey, DepartStopKey, DepartTimeVarianceSecs, -CoordinateList,-TimepointGeom) %>% 
-  filter(DateKey %in% local(DimDate_since_september$DateKey),
-         !is.na(DepartTimeVarianceSecs)) %>%
-  collect()
+FactTimepointAdherence_since_september <- dplyr::tbl(con2
+                                                     , "FactTimepointAdherence"
+                                                     ) %>% 
+  dplyr::select(DateKey
+                , PatternKey
+                , RouteKey
+                , UserKey
+                , DepartStopKey
+                , DepartTimeVarianceSecs
+                , -CoordinateList
+                , -TimepointGeom
+                ) %>% 
+  dplyr::filter(DateKey %in% local(DimDate_since_september$DateKey)
+                , !is.na(DepartTimeVarianceSecs)
+                ) %>%
+  dplyr::collect() %>%
+  data.table()
 
-# consider only getting relevant fields--but note, anti-joins would have to be fixed, most likely.
+# get Avail adherence for yesteday
 
-# FactTimepointAdherence_since_september <- tbl(con2, "FactTimepointAdherence") %>% 
-#   select(DateKey, DepartStopKey, PatternKey,DepartTimeVarianceSecs, RouteKey, -CoordinateList,-TimepointGeom) %>% 
-#   filter(DateKey %in% local(DimDate_since_september$DateKey)) %>%
-#   collect()
+FactTimepointAdherence_yesterday <- FactTimepointAdherence_since_september[DateKey == DimDate_yesterday$DateKey]
+  
 
 # join
 
+dt_left_join <- function(x = NULL
+                         , y = NULL
+                         , by.x = NULL
+                         , by.y = NULL
+                         , column_names = NULL
+                         ){
+  if(is.null(column_names)){
+    x[y
+      , on = paste0(by.x
+                    , "=="
+                    , by.y
+                    )
+      ]
+    } else {
+      x[y[,.()]
+        ]
+    }
+}
+
+columns <- c("StopKey","StopID","StopDesc","StopReportLabel")
+
+DimStop[,..(columns)]
+
+FactTimepointAdherence_since_september_test <- FactTimepointAdherence_since_september[1]
+
+
+FactTimepointAdherence_since_september[DimStop[,.(StopKey
+                                                  , StopID
+                                                  , StopDesc
+                                                  , StopReportLabel
+                                                  )
+                                               ]
+                                       ,on = c("StopKey" = "DepartStopKey")
+                                       ,names(DimStop[,.(StopKey
+                                                         , StopID
+                                                         , StopDesc
+                                                         , StopReportLabel
+                                                         )
+                                                      ]
+                                              ) := mget(paste0("i."
+                                                               , names(DimStop[, .(StopKey
+                                                                                   , StopID
+                                                                                   , StopDesc
+                                                                                   , StopReportLabel
+                                                                                   )
+                                                                               ]
+                                                                       )
+                                                               )
+                                                        )
+                                       ][DimDate_since_september[]]
+
+
+
+DimStop
+
+
 FactTimepointAdherence_since_september_joined <- FactTimepointAdherence_since_september  %>%
+  
   left_join(DimStop, by = c("DepartStopKey" = "StopKey")) %>%
   left_join(select(DimDate_since_september, DateKey, CalendarDate), by = "DateKey")
+
+
 
 # set route 90 OTP
 
